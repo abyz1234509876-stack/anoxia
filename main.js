@@ -91,91 +91,44 @@ const WaterFragmentShader = `
 
 // ── Jellyfish Bell Shader ──
 const JellyfishBellVertex = `
+  varying vec2 vUv;
   uniform float uTime;
-  uniform float uPulse;
-  uniform float uBioluminescent;
   uniform float uMicroplastics;
 
-  varying vec3 vNormal;
-  varying vec3 vPosition;
-  varying float vPulse;
-
-  vec3 hash3(vec3 p) {
-    p = fract(p * vec3(443.8975, 397.2973, 491.1871));
-    p += dot(p.zxy, p.yxz + 19.19);
-    return fract(vec3(p.x * p.y, p.z * p.x, p.y * p.z));
-  }
-
-  float noise(vec3 p) {
-    vec3 i = floor(p);
-    vec3 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(mix(dot(hash3(i), f), dot(hash3(i + vec3(1,0,0)), f - vec3(1,0,0)), f.x),
-          mix(dot(hash3(i + vec3(0,1,0)), f - vec3(0,1,0)), dot(hash3(i + vec3(1,1,0)), f - vec3(1,1,0)), f.x), f.y),
-      mix(mix(dot(hash3(i + vec3(0,0,1)), f - vec3(0,0,1)), dot(hash3(i + vec3(1,0,1)), f - vec3(1,0,1)), f.x),
-          mix(dot(hash3(i + vec3(0,1,1)), f - vec3(0,1,1)), dot(hash3(i + vec3(1,1,1)), f - vec3(1,1,1)), f.x), f.y),
-      f.z
-    );
-  }
-
   void main() {
-    vNormal = normalMatrix * normal;
-    vPosition = position;
-
+    vUv = uv;
     vec3 pos = position;
-
-    // Pulsing contraction
-    float pulse = sin(uTime * 1.4 + uPulse) * 0.5 + 0.5;
-    vPulse = pulse;
-
-    // Squash bell on pulse
-    pos.y -= pulse * 0.3 * abs(pos.y);
-    pos.xz *= 1.0 + pulse * 0.15;
-
-    // Microplastics: high-freq jitter on bell surface
-    float jitter = uMicroplastics / 100.0;
-    float n = noise(pos * 6.0 + uTime * 5.0);
-    pos += normal * n * jitter * 0.06;
-
+    
+    // Mikroplastik etkisi: Hafif titreme
+    if(uMicroplastics > 0.0) {
+        pos.x += sin(uTime * 10.0) * (uMicroplastics / 500.0);
+    }
+    
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `;
 
 const JellyfishBellFragment = `
-  uniform float uTime;
-  uniform float uPulse;
+  uniform sampler2D uTexture;
   uniform float uBioluminescent;
-  uniform vec3 uColor;
-
-  varying vec3 vNormal;
-  varying vec3 vPosition;
-  varying float vPulse;
+  uniform float uTime;
+  varying vec2 vUv;
 
   void main() {
-    // Fresnel-like edge glow
-    vec3 viewDir = normalize(cameraPosition - (modelMatrix * vec4(vPosition, 1.0)).xyz);
-    float fresnel = 1.0 - abs(dot(normalize(vNormal), viewDir));
-    fresnel = pow(fresnel, 1.8);
+    vec4 texColor = texture2D(uTexture, vUv);
+    
+    // Arka planı şeffaf olan PNG'ler için alpha kontrolü
+    if(texColor.a < 0.1) discard;
 
-    vec3 baseColor = uColor;
+    vec3 finalColor = texColor.rgb;
 
-    // Normal mode: translucent blue-purple with edge glow
-    vec3 normalColor = mix(baseColor * 0.3, baseColor, fresnel);
-    normalColor += vec3(0.0, 0.05, 0.15) * vPulse;
+    // Bioluminescent (Anoxia) modu: Renkleri neon mavi/yeşile kaydır
+    if(uBioluminescent > 0.1) {
+        vec3 bioColor = mix(vec3(0.0, 1.0, 1.0), vec3(0.0, 1.0, 0.0), sin(uTime) * 0.5 + 0.5);
+        finalColor = mix(finalColor, bioColor, uBioluminescent);
+    }
 
-    // Bioluminescent mode: neon cyan + lime green
-    vec3 bioColor1 = vec3(0.0, 1.0, 0.9);   // cyan
-    vec3 bioColor2 = vec3(0.22, 1.0, 0.08);  // lime
-    vec3 bioColor = mix(bioColor1, bioColor2, sin(uTime * 2.0 + vPosition.y) * 0.5 + 0.5);
-    bioColor *= 1.0 + fresnel * 3.0;
-    bioColor += vec3(0.0, 0.2, 0.1) * vPulse * 2.0;
-
-    vec3 finalColor = mix(normalColor, bioColor, uBioluminescent);
-    float alpha = mix(0.25, 0.65, fresnel) + uBioluminescent * 0.2;
-    alpha = mix(alpha, 0.85, uBioluminescent);
-
-    gl_FragColor = vec4(finalColor, alpha);
+    gl_FragColor = vec4(finalColor, texColor.a);
   }
 `;
 
@@ -312,8 +265,8 @@ const FishFragment = `
 // ─────────────────────────────────────────────
 
 const params = {
-  nitrogen:      0,
-  co2:           0,
+  nitrogen: 0,
+  co2: 0,
   microplastics: 0,
 };
 
@@ -323,16 +276,20 @@ const params = {
 
 class StrobulationEngine {
   constructor() {
+
+    this.textureLoader = new THREE.TextureLoader();
+    this.jellyTexture = this.textureLoader.load('jellyfish01.png'); // Resim dosyanın adını buraya yaz
+
     this.clock = new THREE.Clock();
-    this.time  = 0;
+    this.time = 0;
 
     this.jellyfishGroup = null;
     this.jellyInstances = [];
-    this.fishMeshes     = [];
-    this.waterMesh      = null;
+    this.fishMeshes = [];
+    this.waterMesh = null;
 
-    this.totalStress    = 0;
-    this.systemState    = 'NOMINAL';
+    this.totalStress = 0;
+    this.systemState = 'NOMINAL';
 
     this._setupRenderer();
     this._setupScene();
@@ -377,15 +334,15 @@ class StrobulationEngine {
   _buildWater() {
     const geo = new THREE.BoxGeometry(120, 60, 120, 48, 24, 48);
     this.waterMaterial = new THREE.ShaderMaterial({
-      vertexShader:   WaterVertexShader,
+      vertexShader: WaterVertexShader,
       fragmentShader: WaterFragmentShader,
       uniforms: {
-        uTime:         { value: 0 },
-        uNitrogen:     { value: 0 },
-        uCO2:          { value: 0 },
-        uMicroplastics:{ value: 0 },
-        uHypoxia:      { value: 0 },
-        uAnoxia:       { value: 0 },
+        uTime: { value: 0 },
+        uNitrogen: { value: 0 },
+        uCO2: { value: 0 },
+        uMicroplastics: { value: 0 },
+        uHypoxia: { value: 0 },
+        uAnoxia: { value: 0 },
       },
       transparent: true,
       side: THREE.BackSide,
@@ -401,14 +358,14 @@ class StrobulationEngine {
     this.fishGroup = new THREE.Group();
     this.fishMeshes = [];
 
-    const fishGeo  = new THREE.TetrahedronGeometry(0.3, 0);
-    this.fishMat   = new THREE.ShaderMaterial({
-      vertexShader:   FishVertex,
+    const fishGeo = new THREE.TetrahedronGeometry(0.3, 0);
+    this.fishMat = new THREE.ShaderMaterial({
+      vertexShader: FishVertex,
       fragmentShader: FishFragment,
       uniforms: {
-        uTime:   { value: 0 },
-        uCO2:    { value: 0 },
-        uHypoxia:{ value: 0 },
+        uTime: { value: 0 },
+        uCO2: { value: 0 },
+        uHypoxia: { value: 0 },
       },
       transparent: true,
       side: THREE.DoubleSide,
@@ -432,12 +389,12 @@ class StrobulationEngine {
         Math.random() * Math.PI,
         Math.random() * Math.PI,
       );
-      mesh.userData.phase    = Math.random() * Math.PI * 2;
-      mesh.userData.speedX   = (Math.random() - 0.5) * 0.012;
-      mesh.userData.speedZ   = (Math.random() - 0.5) * 0.012;
-      mesh.userData.range    = 20 + Math.random() * 20;
-      mesh.userData.originX  = mesh.position.x;
-      mesh.userData.originZ  = mesh.position.z;
+      mesh.userData.phase = Math.random() * Math.PI * 2;
+      mesh.userData.speedX = (Math.random() - 0.5) * 0.012;
+      mesh.userData.speedZ = (Math.random() - 0.5) * 0.012;
+      mesh.userData.range = 20 + Math.random() * 20;
+      mesh.userData.originX = mesh.position.x;
+      mesh.userData.originZ = mesh.position.z;
       this.fishMeshes.push(mesh);
       this.fishGroup.add(mesh);
     }
@@ -467,8 +424,8 @@ class StrobulationEngine {
   _createJellyfish(index, total) {
     const group = new THREE.Group();
 
-    // Spread placement
-    const angle  = (index / total) * Math.PI * 2 + Math.random() * 0.5;
+    // Konumlandırma (Mevcut kodla aynı mantık)
+    const angle = (index / total) * Math.PI * 2 + Math.random() * 0.5;
     const radius = 5 + Math.random() * 30;
     group.position.set(
       Math.cos(angle) * radius,
@@ -476,112 +433,45 @@ class StrobulationEngine {
       Math.sin(angle) * radius,
     );
 
-    const phase    = Math.random() * Math.PI * 2;
-    const jellyCol = new THREE.Color().setHSL(0.58 + Math.random() * 0.1, 0.7, 0.55);
+    // Tek parça deniz anası için Plane (Düzlem) geometrisi
+    // 3.0, 4.0 değerlerini resminin en-boy oranına göre değiştirebilirsin
+    const geo = new THREE.PlaneGeometry(3.0, 4.0);
 
-    // ── Bell ──
-    const bellGeo = new THREE.SphereGeometry(1.0, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.6);
-    const bellMat = new THREE.ShaderMaterial({
-      vertexShader:   JellyfishBellVertex,
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: JellyfishBellVertex,
       fragmentShader: JellyfishBellFragment,
       uniforms: {
-        uTime:           { value: 0 },
-        uPulse:          { value: phase },
+        uTexture: { value: this.jellyTexture },
+        uTime: { value: 0 },
         uBioluminescent: { value: 0 },
-        uMicroplastics:  { value: 0 },
-        uColor:          { value: jellyCol },
+        uMicroplastics: { value: 0 }
       },
       transparent: true,
-      side: THREE.DoubleSide,
-      depthWrite: false,
+      side: THREE.DoubleSide
     });
-    const bell = new THREE.Mesh(bellGeo, bellMat);
-    group.add(bell);
 
-    // ── Oral Arms ──
-    const oralGroup = new THREE.Group();
-    const ARM_COUNT = 4;
-    for (let a = 0; a < ARM_COUNT; a++) {
-      const armAngle = (a / ARM_COUNT) * Math.PI * 2;
-      const armGeo   = this._buildTentacleGeo(8, 0.6);
-      const armMat   = new THREE.ShaderMaterial({
-        vertexShader:   TentacleVertex,
-        fragmentShader: TentacleFragment,
-        uniforms: {
-          uTime:           { value: 0 },
-          uPulse:          { value: phase },
-          uMicroplastics:  { value: 0 },
-          uHypoxia:        { value: 0 },
-          uBioluminescent: { value: 0 },
-          uColor:          { value: new THREE.Color(jellyCol).multiplyScalar(0.8) },
-        },
-        transparent: true,
-        depthWrite: false,
-      });
-      const arm = new THREE.LineSegments(armGeo, armMat);
-      arm.position.set(
-        Math.cos(armAngle) * 0.3,
-        -0.5,
-        Math.sin(armAngle) * 0.3,
-      );
-      oralGroup.add(arm);
-    }
-    group.add(oralGroup);
+    const mesh = new THREE.Mesh(geo, mat);
 
-    // ── Tentacles ──
-    const tentacleGroup = new THREE.Group();
-    const TENT_COUNT = 12;
-    for (let t = 0; t < TENT_COUNT; t++) {
-      const tAngle = (t / TENT_COUNT) * Math.PI * 2;
-      const tGeo   = this._buildTentacleGeo(16, 1.6);
-      const tMat   = new THREE.ShaderMaterial({
-        vertexShader:   TentacleVertex,
-        fragmentShader: TentacleFragment,
-        uniforms: {
-          uTime:           { value: 0 },
-          uPulse:          { value: phase + t * 0.3 },
-          uMicroplastics:  { value: 0 },
-          uHypoxia:        { value: 0 },
-          uBioluminescent: { value: 0 },
-          uColor:          { value: new THREE.Color(jellyCol).multiplyScalar(0.6) },
-        },
-        transparent: true,
-        depthWrite: false,
-      });
-      const tent = new THREE.LineSegments(tGeo, tMat);
-      tent.position.set(
-        Math.cos(tAngle) * 0.85,
-        -0.15,
-        Math.sin(tAngle) * 0.85,
-      );
-      tentacleGroup.add(tent);
-    }
-    group.add(tentacleGroup);
+    // Resmin kameraya bakması için (opsiyonel)
+    mesh.rotation.x = 0;
 
-    // Ambient point light (dim, attached to each jelly)
-    const light = new THREE.PointLight(jellyCol, 0.6, 8);
-    light.position.set(0, 0, 0);
-    group.add(light);
+    group.add(mesh);
 
     return {
       group,
-      bell,
-      bellMat,
-      oralGroup,
-      tentacleGroup,
-      light,
-      phase,
+      allMats: [mat],
+      phase: Math.random() * Math.PI * 2,
       speed: 0.3 + Math.random() * 0.4,
       driftAngle: Math.random() * Math.PI * 2,
       driftSpeed: 0.003 + Math.random() * 0.005,
-      allMats: [bellMat, ...oralGroup.children.map(c => c.material), ...tentacleGroup.children.map(c => c.material)],
-      tentMats: [...tentacleGroup.children.map(c => c.material), ...oralGroup.children.map(c => c.material)],
+      // Diğer eski referansları boş dizi olarak geçiyoruz ki loop hata vermesin
+      tentMats: []
     };
   }
 
   _buildTentacleGeo(segments, length) {
     const positions = [];
-    const phases    = [];
+    const phases = [];
 
     for (let s = 0; s < segments; s++) {
       const y0 = -(s / segments) * length;
@@ -592,8 +482,8 @@ class StrobulationEngine {
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('aPhase',   new THREE.Float32BufferAttribute(phases, 1));
-    geo.setAttribute('aRadius',  new THREE.Float32BufferAttribute(phases.map(() => Math.random()), 1));
+    geo.setAttribute('aPhase', new THREE.Float32BufferAttribute(phases, 1));
+    geo.setAttribute('aRadius', new THREE.Float32BufferAttribute(phases.map(() => Math.random()), 1));
     return geo;
   }
 
@@ -645,8 +535,8 @@ class StrobulationEngine {
 
     // ── Jellyfish count (nitrogen bloom) ──
     if (nitrogen > 50) {
-      const t      = (nitrogen - 50) / 50; // 0-1
-      const count  = Math.floor(3 + t * t * 47); // 3 to 50, exponential
+      const t = (nitrogen - 50) / 50; // 0-1
+      const count = Math.floor(3 + t * t * 47); // 3 to 50, exponential
       if (this.jellyInstances.length !== count) {
         this._buildJellyfishSwarm(count);
       }
@@ -657,17 +547,17 @@ class StrobulationEngine {
     }
 
     // ── HUD updates ──
-    const stateEl    = document.getElementById('status-state');
-    const stressEl   = document.getElementById('status-stress');
-    const entityEl   = document.getElementById('status-entities');
+    const stateEl = document.getElementById('status-state');
+    const stressEl = document.getElementById('status-stress');
+    const entityEl = document.getElementById('status-entities');
 
-    stateEl.textContent  = this.systemState;
+    stateEl.textContent = this.systemState;
     stressEl.textContent = this.totalStress.toFixed(0);
     entityEl.textContent = this.jellyInstances.length + this.fishMeshes.length;
 
     stateEl.className = 'status-val';
-    if (this.systemState === 'STRESSED')         stateEl.classList.add('warn');
-    if (this.systemState === 'HYPOXIA')          stateEl.classList.add('danger');
+    if (this.systemState === 'STRESSED') stateEl.classList.add('warn');
+    if (this.systemState === 'HYPOXIA') stateEl.classList.add('danger');
     if (this.systemState === 'ANOXIA / DEAD ZONE') stateEl.classList.add('bio');
 
     // ── Anoxia overlay ──
@@ -683,31 +573,31 @@ class StrobulationEngine {
   _loop() {
     requestAnimationFrame(() => this._loop());
     const delta = this.clock.getDelta();
-    this.time  += delta;
+    this.time += delta;
 
     const { nitrogen, co2, microplastics } = params;
-    const hypoxia  = this.totalStress > 150 ? (this.totalStress - 150) / 100 : 0;
-    const anoxia   = this.totalStress > 250 ? (this.totalStress - 250) / 50  : 0;
-    const bioOn    = Math.min(anoxia, 1.0);
-    const speed    = 1.0 - Math.min(hypoxia * 0.8, 0.8);
+    const hypoxia = this.totalStress > 150 ? (this.totalStress - 150) / 100 : 0;
+    const anoxia = this.totalStress > 250 ? (this.totalStress - 250) / 50 : 0;
+    const bioOn = Math.min(anoxia, 1.0);
+    const speed = 1.0 - Math.min(hypoxia * 0.8, 0.8);
 
     // ── Update water ──
     if (this.waterMaterial) {
       const u = this.waterMaterial.uniforms;
-      u.uTime.value          = this.time;
-      u.uNitrogen.value      = nitrogen;
-      u.uCO2.value           = co2;
+      u.uTime.value = this.time;
+      u.uNitrogen.value = nitrogen;
+      u.uCO2.value = co2;
       u.uMicroplastics.value = microplastics;
-      u.uHypoxia.value       = Math.min(hypoxia, 1.0);
-      u.uAnoxia.value        = Math.min(anoxia, 1.0);
+      u.uHypoxia.value = Math.min(hypoxia, 1.0);
+      u.uAnoxia.value = Math.min(anoxia, 1.0);
     }
 
     // ── Update fish ──
     const fishVisibility = 1.0 - Math.min(hypoxia, 1.0);
     this.fishGroup.visible = fishVisibility > 0.01;
     if (this.fishMat) {
-      this.fishMat.uniforms.uTime.value    = this.time;
-      this.fishMat.uniforms.uCO2.value     = co2;
+      this.fishMat.uniforms.uTime.value = this.time;
+      this.fishMat.uniforms.uCO2.value = co2;
       this.fishMat.uniforms.uHypoxia.value = Math.min(hypoxia, 1.0);
     }
     this.fishMeshes.forEach((fish) => {
@@ -728,7 +618,7 @@ class StrobulationEngine {
       jelly.group.position.y += Math.sin(t * jelly.speed + jelly.phase) * 0.006;
 
       // Wrap to scene bounds
-      ['x','z'].forEach(axis => {
+      ['x', 'z'].forEach(axis => {
         if (Math.abs(jelly.group.position[axis]) > 50) {
           jelly.group.position[axis] *= -0.9;
         }
@@ -737,9 +627,9 @@ class StrobulationEngine {
       // Update all materials
       jelly.allMats.forEach(mat => {
         if (mat.uniforms) {
-          mat.uniforms.uTime.value           = t;
+          mat.uniforms.uTime.value = t;
           mat.uniforms.uBioluminescent.value = bioOn;
-          mat.uniforms.uMicroplastics.value  = microplastics;
+          mat.uniforms.uMicroplastics.value = microplastics;
         }
       });
       jelly.tentMats.forEach(mat => {
@@ -752,11 +642,11 @@ class StrobulationEngine {
       if (bioOn > 0.01) {
         jelly.light.color.setHSL(0.35 + Math.sin(t * 0.5) * 0.1, 1.0, 0.6);
         jelly.light.intensity = 1.5 + Math.sin(t * 2.0 + jelly.phase) * 0.5;
-        jelly.light.distance  = 12;
+        jelly.light.distance = 12;
       } else {
         jelly.light.color.copy(jelly.bellMat.uniforms.uColor.value);
         jelly.light.intensity = 0.4 + Math.sin(t + jelly.phase) * 0.2;
-        jelly.light.distance  = 8;
+        jelly.light.distance = 8;
       }
     });
 
