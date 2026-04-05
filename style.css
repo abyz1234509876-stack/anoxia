@@ -1,0 +1,215 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;600;700&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --col-bg: #050508;
+  --col-surface: #0a0a10;
+  --col-border: #1a1a2e;
+  --col-text: #c8d8e8;
+  --col-accent: #00e5ff;
+  --col-warn: #ff6b35;
+  --col-danger: #ff1744;
+  --col-bio: #39ff14;
+  --col-dim: #4a5568;
+  --font-mono: 'Share Tech Mono', monospace;
+  --font-display: 'Rajdhani', sans-serif;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--col-bg);
+  color: var(--col-text);
+  font-family: var(--font-mono);
+}
+
+/* ── Canvas ── */
+#canvas-container {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+#canvas-container canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ── HUD Top-Left ── */
+#hud {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#hud-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hud-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.35em;
+  color: var(--col-accent);
+  opacity: 0.7;
+}
+
+.hud-name {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #ffffff;
+  line-height: 1;
+  text-shadow: 0 0 20px rgba(0, 229, 255, 0.3);
+}
+
+.hud-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--col-dim);
+}
+
+#hud-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 1px solid var(--col-border);
+  padding-left: 12px;
+}
+
+.status-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.status-key {
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: var(--col-dim);
+  min-width: 60px;
+}
+
+.status-val {
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  color: var(--col-accent);
+  transition: color 0.5s ease;
+}
+
+.status-val.warn { color: var(--col-warn); }
+.status-val.danger { color: var(--col-danger); }
+.status-val.bio { color: var(--col-bio); }
+
+/* ── Controls Panel ── */
+#controls-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 10;
+}
+
+/* Tweakpane overrides — brutal monochrome */
+#controls-container .tp-dfwv {
+  width: 260px !important;
+}
+
+.tp-rotv {
+  background: rgba(5, 5, 10, 0.92) !important;
+  border: 1px solid var(--col-border) !important;
+  backdrop-filter: blur(12px);
+}
+
+.tp-rotv-t {
+  font-family: var(--font-mono) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.25em !important;
+  color: var(--col-accent) !important;
+}
+
+/* ── Anoxia Overlay ── */
+#overlay-anoxia {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.5s ease;
+}
+
+#overlay-anoxia.active {
+  opacity: 1;
+}
+
+.anoxia-text {
+  font-family: var(--font-display);
+  font-size: clamp(32px, 5vw, 64px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--col-bio);
+  text-shadow:
+    0 0 10px var(--col-bio),
+    0 0 40px var(--col-bio),
+    0 0 80px rgba(57, 255, 20, 0.4);
+  animation: pulse-bio 2s ease-in-out infinite alternate;
+}
+
+.anoxia-sub {
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  color: rgba(57, 255, 20, 0.5);
+}
+
+@keyframes pulse-bio {
+  from { text-shadow: 0 0 10px var(--col-bio), 0 0 40px var(--col-bio), 0 0 80px rgba(57,255,20,0.3); }
+  to   { text-shadow: 0 0 20px var(--col-bio), 0 0 80px var(--col-bio), 0 0 160px rgba(57,255,20,0.6); }
+}
+
+/* ── Scanline grain overlay (always present, intensifies in anoxia) ── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  animation: grain-shift 0.15s steps(1) infinite;
+}
+
+@keyframes grain-shift {
+  0%   { background-position: 0px 0px; }
+  10%  { background-position: -50px -100px; }
+  20%  { background-position: 150px 50px; }
+  30%  { background-position: -100px 100px; }
+  40%  { background-position: 50px -50px; }
+  50%  { background-position: 100px 100px; }
+  60%  { background-position: -150px 50px; }
+  70%  { background-position: 50px 150px; }
+  80%  { background-position: -50px -100px; }
+  90%  { background-position: 100px -150px; }
+  100% { background-position: -100px 0px; }
+}
